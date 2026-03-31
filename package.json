@@ -1,0 +1,24 @@
+{
+  "name": "medichain-express-backend",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Express API for Medichain smart contract integration",
+  "main": "src/server.js",
+  "scripts": {
+    "dev": "node src/server.js",
+    "start": "node src/server.js"
+  },
+  "dependencies": {
+    "bcryptjs": "*",
+    "cors": "*",
+    "dotenv": "*",
+    "ethers": "*",
+    "express": "*",
+    "helmet": "*",
+    "jsonwebtoken": "*",
+    "mongoose": "*",
+    "morgan": "*",
+    "qrcode": "*"
+  }
+}
+
