@@ -1,5 +1,7 @@
 # Medichain Express Backend
 
+> **Full local setup, env tables, E2E curl flows, and deployment order:** see the repository **[`README.md`](../README.md)** at the repo root. This file focuses on API behavior and integration notes.
+
 This folder contains the **Node.js + Express.js API** for the Medichain MVP.
 
 It is designed around the requirements from the two source documents:
@@ -102,10 +104,10 @@ Copy `.env.example` to `.env` and fill values:
 - `PORT`: API server port (default `4000`)
 - `JWT_SECRET`: token secret for admin auth
 - `MONGODB_URI`: Mongo connection string
-- `RPC_URL`: Polygon Mumbai (or chosen EVM chain) RPC endpoint
+- `RPC_URL`: HTTPS RPC for the **same chain** as your deployment (e.g. Base Sepolia, Polygon Amoy — see root `README.md`)
 - `CONTRACT_ADDRESS`: deployed `PharmVerifyRegistry` contract address
 - `OWNER_PRIVATE_KEY`: wallet private key with admin/owner rights on contract
-- `FRONTEND_BASE_URL`: base URL your frontend will use for verification pages
+- Pinata / Cloudinary variables: see root `README.md` and `.env.example` (IPFS for sensitive files, Cloudinary for public images)
 
 ## Install and run locally
 
@@ -228,7 +230,7 @@ To match the guide’s testing scenarios:
 Recommended MVP deployment stack from proposal:
 
 - Backend hosting: Railway / Render
-- Chain: Polygon Mumbai testnet first
+- Chain: Polygon Amoy or Base Sepolia testnet first (see `smart-contracts` README)
 
 Deployment checklist:
 

@@ -80,8 +80,49 @@ function requireManufacturer(req, res, next) {
   }
 }
 
+function requireManufacturerOrAdmin(req, res, next) {
+  const authHeader = req.headers.authorization || "";
+  const token = authHeader.startsWith("Bearer ")
+    ? authHeader.slice("Bearer ".length)
+    : null;
+
+  if (!token) {
+    return res.status(401).json({
+      ok: false,
+      error: "UNAUTHORIZED",
+      message: "Missing bearer token"
+    });
+  }
+
+  try {
+    const secret = process.env.JWT_SECRET;
+    if (!secret) {
+      throw new Error("JWT_SECRET is not configured");
+    }
+
+    const payload = jwt.verify(token, secret);
+    if (!payload || (payload.role !== "admin" && payload.role !== "manufacturer")) {
+      return res.status(403).json({
+        ok: false,
+        error: "FORBIDDEN",
+        message: "Admin or manufacturer role required"
+      });
+    }
+
+    req.user = payload;
+    return next();
+  } catch (error) {
+    return res.status(401).json({
+      ok: false,
+      error: "INVALID_TOKEN",
+      message: error.message || "Token verification failed"
+    });
+  }
+}
+
 module.exports = {
   requireAdmin,
-  requireManufacturer
+  requireManufacturer,
+  requireManufacturerOrAdmin
 };
 

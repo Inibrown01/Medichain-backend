@@ -5,7 +5,6 @@ const BatchRecordSchema = new mongoose.Schema(
     manufacturerId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "ManufacturerUser",
-      required: true,
       index: true
     },
     productName: { type: String, required: true },
@@ -19,7 +18,11 @@ const BatchRecordSchema = new mongoose.Schema(
       default: "active",
       index: true
     },
-    verificationCount: { type: Number, default: 0 }
+    verificationCount: { type: Number, default: 0 },
+    /** Admin workflow flags */
+    adminFlagged: { type: Boolean, default: false, index: true },
+    suspended: { type: Boolean, default: false, index: true },
+    qrHash: { type: String, default: "" }
   },
   { timestamps: true }
 );

@@ -5,7 +5,9 @@ const ManufacturerUserSchema = new mongoose.Schema(
     email: { type: String, required: true, unique: true, index: true },
     passwordHash: { type: String, required: true },
     companyName: { type: String, required: true },
-    isActive: { type: Boolean, default: true }
+    isActive: { type: Boolean, default: true },
+    licenseSuspended: { type: Boolean, default: false },
+    suspensionReason: { type: String, default: "" }
   },
   { timestamps: true }
 );

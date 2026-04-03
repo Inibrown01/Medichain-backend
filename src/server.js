@@ -4,7 +4,12 @@ const cors = require("cors");
 const helmet = require("helmet");
 const morgan = require("morgan");
 const { connectMongo } = require("./db/mongoose");
+const { hasBlockchainReadConfig, hasBlockchainWriteConfig } = require("./lib/blockchainClient");
+const ipfsService = require("./services/ipfsService");
+const cloudinaryService = require("./services/cloudinaryService");
 const drugRoutes = require("./routes/drugRoutes");
+const adminRoutes = require("./routes/adminRoutes");
+const uploadRoutes = require("./routes/uploadRoutes");
 
 const app = express();
 const port = Number(process.env.PORT || 4000);
@@ -18,11 +23,19 @@ app.get("/health", (_req, res) => {
   res.json({
     ok: true,
     service: "medichain-express-backend",
-    timestamp: new Date().toISOString()
+    timestamp: new Date().toISOString(),
+    integrations: {
+      blockchainRead: hasBlockchainReadConfig(),
+      blockchainWrite: hasBlockchainWriteConfig(),
+      ipfsPinata: ipfsService.isConfigured(),
+      cloudinary: cloudinaryService.isConfigured()
+    }
   });
 });
 
 app.use("/api/v1", drugRoutes);
+app.use("/api/v1", uploadRoutes);
+app.use("/api/v1/admin", adminRoutes);
 
 app.use((err, _req, res, _next) => {
   console.error(err);

@@ -1,6 +1,16 @@
 const { ethers } = require("ethers");
 const { pharmVerifyRegistryAbi } = require("../contracts/pharmVerifyRegistryAbi");
 
+function hasBlockchainReadConfig() {
+  return Boolean(process.env.RPC_URL && process.env.CONTRACT_ADDRESS);
+}
+
+function hasBlockchainWriteConfig() {
+  return Boolean(
+    process.env.RPC_URL && process.env.CONTRACT_ADDRESS && process.env.OWNER_PRIVATE_KEY
+  );
+}
+
 function getReadContract() {
   const rpcUrl = process.env.RPC_URL;
   const contractAddress = process.env.CONTRACT_ADDRESS;
@@ -31,6 +41,8 @@ function getWriteContract() {
 
 module.exports = {
   getReadContract,
-  getWriteContract
+  getWriteContract,
+  hasBlockchainReadConfig,
+  hasBlockchainWriteConfig
 };
 

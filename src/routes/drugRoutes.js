@@ -1,15 +1,96 @@
 const express = require("express");
 const jwt = require("jsonwebtoken");
 const bcrypt = require("bcryptjs");
+const mongoose = require("mongoose");
 const { ZeroAddress, getAddress, isAddress } = require("ethers");
-const { requireAdmin } = require("../middleware/auth");
+const { requireAdmin, requireManufacturer } = require("../middleware/auth");
 const { getReadContract, getWriteContract } = require("../lib/blockchainClient");
 const { generateVerificationQrDataUrl } = require("../services/qrService");
 const ProductRecord = require("../models/ProductRecord");
 const VerificationLog = require("../models/VerificationLog");
 const AdminUser = require("../models/AdminUser");
+const ManufacturerUser = require("../models/ManufacturerUser");
+const ProductApplication = require("../models/ProductApplication");
 
 const router = express.Router();
+
+const WEEKDAY_LABELS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+
+function escapeRegex(s) {
+  return String(s).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function startOfUtcWeekMonday(d = new Date()) {
+  const x = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()));
+  const dow = x.getUTCDay();
+  const diff = dow === 0 ? -6 : 1 - dow;
+  x.setUTCDate(x.getUTCDate() + diff);
+  x.setUTCHours(0, 0, 0, 0);
+  return x;
+}
+
+function addDaysUtc(d, n) {
+  const x = new Date(d.getTime());
+  x.setUTCDate(x.getUTCDate() + n);
+  return x;
+}
+
+function utcDateKey(d) {
+  return d.toISOString().slice(0, 10);
+}
+
+function relTimeLabel(d) {
+  const ms = Date.now() - new Date(d).getTime();
+  const m = Math.floor(ms / 60000);
+  if (m < 1) return "JUST NOW";
+  if (m < 60) return `${m} MIN${m === 1 ? "" : "S"} AGO`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h} HOUR${h === 1 ? "" : "S"} AGO`;
+  const days = Math.floor(h / 24);
+  return `${days} DAY${days === 1 ? "" : "S"} AGO`;
+}
+
+async function mapRecentLogsToActivity(logs) {
+  const ids = [...new Set(logs.map((l) => l.productId).filter((id) => id != null))];
+  const products =
+    ids.length === 0
+      ? []
+      : await ProductRecord.find({ productId: { $in: ids } }).select("productId drugName").lean();
+  const byId = new Map(products.map((p) => [p.productId, p]));
+
+  return logs.map((log) => {
+    const prod = log.productId != null ? byId.get(log.productId) : null;
+    const drug = prod?.drugName || "Product";
+    let kind = "info";
+    let title = "Verification";
+    let meta =
+      log.batchNumber ||
+      (log.productId != null ? `Product #${log.productId}` : "—");
+
+    if (log.verificationResult === "GENUINE") {
+      kind = "ok";
+      title = "Successful Verification";
+      meta = prod
+        ? `${drug}${log.batchNumber ? ` · Batch ${log.batchNumber}` : ""}`
+        : meta;
+    } else if (log.verificationResult === "FLAGGED") {
+      kind = "flag";
+      title = "Suspicious Attempt";
+      meta = log.clientIp ? `IP: ${log.clientIp}` : meta;
+    } else {
+      kind = "warn";
+      title = "Unregistered Lookup";
+      meta = log.batchNumber || meta;
+    }
+
+    return {
+      kind,
+      title,
+      meta,
+      timeLabel: relTimeLabel(log.createdAt)
+    };
+  });
+}
 
 function mapStatus(statusNumber) {
   const n = Number(statusNumber);
@@ -458,6 +539,344 @@ router.post("/auth/mock-admin-token", (req, res) => {
       token
     }
   });
+});
+
+/**
+ * Manufacturer dashboard analytics: weekly verification series (UTC Mon–Sun)
+ * and recent verification log rows. Optional ?manufacturer=Name (case-insensitive exact match on ProductRecord.manufacturer).
+ */
+router.get("/analytics/dashboard", async (req, res, next) => {
+  try {
+    const manufacturer =
+      typeof req.query.manufacturer === "string" ? req.query.manufacturer.trim() : "";
+
+    let productIdFilter = null;
+    if (manufacturer) {
+      const rows = await ProductRecord.find({
+        manufacturer: new RegExp(`^${escapeRegex(manufacturer)}$`, "i")
+      })
+        .select("productId")
+        .lean();
+      productIdFilter = rows.map((r) => r.productId);
+    }
+
+    const baseMatch = {};
+    if (productIdFilter !== null) {
+      if (productIdFilter.length === 0) {
+        return res.json({
+          ok: true,
+          data: {
+            verificationWeek: WEEKDAY_LABELS.map((label) => ({ label, checks: 0, fake: 0 })),
+            recentActivity: []
+          }
+        });
+      }
+      baseMatch.productId = { $in: productIdFilter };
+    }
+
+    const weekStart = startOfUtcWeekMonday();
+    const weekEnd = addDaysUtc(weekStart, 7);
+
+    const byDay = new Map();
+    for (let i = 0; i < 7; i += 1) {
+      const key = utcDateKey(addDaysUtc(weekStart, i));
+      byDay.set(key, { checks: 0, fake: 0 });
+    }
+
+    const agg = await VerificationLog.aggregate([
+      {
+        $match: {
+          ...baseMatch,
+          createdAt: { $gte: weekStart, $lt: weekEnd }
+        }
+      },
+      {
+        $group: {
+          _id: {
+            ymd: {
+              $dateToString: { format: "%Y-%m-%d", date: "$createdAt", timezone: "UTC" }
+            },
+            result: "$verificationResult"
+          },
+          count: { $sum: 1 }
+        }
+      }
+    ]);
+
+    for (const row of agg) {
+      const key = row._id.ymd;
+      const bucket = byDay.get(key);
+      if (!bucket) continue;
+      const c = row.count;
+      const r = row._id.result;
+      if (r === "GENUINE") bucket.checks += c;
+      if (r === "FLAGGED" || r === "NOT_REGISTERED") bucket.fake += c;
+    }
+
+    const verificationWeek = [];
+    for (let i = 0; i < 7; i += 1) {
+      const key = utcDateKey(addDaysUtc(weekStart, i));
+      const b = byDay.get(key) || { checks: 0, fake: 0 };
+      verificationWeek.push({ label: WEEKDAY_LABELS[i], checks: b.checks, fake: b.fake });
+    }
+
+    const recentLogs = await VerificationLog.find(baseMatch)
+      .sort({ createdAt: -1 })
+      .limit(10)
+      .lean();
+
+    const recentActivity = await mapRecentLogsToActivity(recentLogs);
+
+    return res.json({
+      ok: true,
+      data: {
+        verificationWeek,
+        recentActivity
+      }
+    });
+  } catch (error) {
+    return next(error);
+  }
+});
+
+router.post("/auth/manufacturer/register", async (req, res, next) => {
+  try {
+    const { email, password, companyName } = req.body || {};
+    if (!email || !password || password.length < 8 || !companyName) {
+      return res.status(400).json({
+        ok: false,
+        error: "VALIDATION_ERROR",
+        message: "email, password (>= 8 chars), and companyName are required"
+      });
+    }
+
+    const existing = await ManufacturerUser.findOne({ email: email.toLowerCase() });
+    if (existing) {
+      return res.status(409).json({
+        ok: false,
+        error: "CONFLICT",
+        message: "Email already registered"
+      });
+    }
+
+    const passwordHash = await bcrypt.hash(password, 10);
+    await ManufacturerUser.create({
+      email: email.toLowerCase(),
+      passwordHash,
+      companyName: String(companyName).trim()
+    });
+
+    return res.status(201).json({ ok: true, message: "Manufacturer registered" });
+  } catch (error) {
+    return next(error);
+  }
+});
+
+router.post("/auth/manufacturer/login", async (req, res, next) => {
+  try {
+    const { email, password } = req.body || {};
+    if (!email || !password) {
+      return res.status(400).json({
+        ok: false,
+        error: "VALIDATION_ERROR",
+        message: "email and password are required"
+      });
+    }
+
+    const user = await ManufacturerUser.findOne({ email: email.toLowerCase() });
+    if (!user || !user.isActive) {
+      return res.status(401).json({
+        ok: false,
+        error: "INVALID_CREDENTIALS",
+        message: "Invalid email or password"
+      });
+    }
+
+    const valid = await bcrypt.compare(password, user.passwordHash);
+    if (!valid) {
+      return res.status(401).json({
+        ok: false,
+        error: "INVALID_CREDENTIALS",
+        message: "Invalid email or password"
+      });
+    }
+
+    const secret = process.env.JWT_SECRET;
+    if (!secret) {
+      return res.status(500).json({
+        ok: false,
+        error: "CONFIG_ERROR",
+        message: "JWT_SECRET is required"
+      });
+    }
+
+    const token = jwt.sign(
+      {
+        role: "manufacturer",
+        email: user.email,
+        sub: String(user._id),
+        companyName: user.companyName
+      },
+      secret,
+      { expiresIn: "7d" }
+    );
+
+    return res.json({
+      ok: true,
+      data: {
+        token,
+        companyName: user.companyName,
+        email: user.email
+      }
+    });
+  } catch (error) {
+    return next(error);
+  }
+});
+
+/**
+ * Manufacturer: submit a product approval application (metadata + document URLs from IPFS / Cloudinary uploads).
+ */
+router.post("/manufacturer/product-applications", requireManufacturer, async (req, res, next) => {
+  try {
+    const sub = req.user && req.user.sub;
+    if (!sub || !mongoose.Types.ObjectId.isValid(sub)) {
+      return res.status(400).json({
+        ok: false,
+        error: "INVALID_SESSION",
+        message: "Invalid manufacturer session"
+      });
+    }
+
+    const body = req.body || {};
+    const {
+      productName,
+      category = "",
+      productType = "MEDICINE",
+      description = "",
+      nafdacNumber = "",
+      approvalDate,
+      expiryDate,
+      location = "",
+      manufacturerName,
+      thumbnailUrl = "",
+      documents = []
+    } = body;
+
+    if (!productName || typeof productName !== "string") {
+      return res.status(400).json({
+        ok: false,
+        error: "VALIDATION_ERROR",
+        message: "productName is required"
+      });
+    }
+
+    if (!Array.isArray(documents)) {
+      return res.status(400).json({
+        ok: false,
+        error: "VALIDATION_ERROR",
+        message: "documents must be an array"
+      });
+    }
+
+    const user = await ManufacturerUser.findById(sub).select("companyName email").lean();
+    const company = user?.companyName || "";
+
+    const normalizedDocs = documents.map((d) => ({
+      name: String(d.name || "Document"),
+      fileName: String(d.fileName || ""),
+      status: "pending",
+      mimeType: String(d.mimeType || "application/octet-stream"),
+      previewUrl: String(d.previewUrl || "")
+    }));
+
+    const now = new Date();
+    const timeline = [
+      {
+        key: "submitted",
+        title: "Application submitted",
+        subtitle: "Awaiting regulatory review",
+        at: now,
+        tone: "blue"
+      }
+    ];
+
+    const checklist = [
+      { id: "submitted", label: "Application received", done: true },
+      { id: "review", label: "Regulatory review", done: false },
+      { id: "decision", label: "Decision", done: false }
+    ];
+
+    const doc = await ProductApplication.create({
+      manufacturerId: sub,
+      productName: String(productName).trim(),
+      category: String(category).trim(),
+      productType: String(productType).trim() || "MEDICINE",
+      description: String(description).trim(),
+      nafdacNumber: String(nafdacNumber).trim(),
+      approvalDate: approvalDate ? new Date(approvalDate) : undefined,
+      expiryDate: expiryDate ? new Date(expiryDate) : undefined,
+      location: String(location).trim(),
+      manufacturerName: String(manufacturerName || company).trim(),
+      contactEmail: user?.email || "",
+      thumbnailUrl: String(thumbnailUrl).trim(),
+      documents: normalizedDocs,
+      timeline,
+      checklist,
+      status: "pending",
+      registrationLabel: "NEW APPLICATION"
+    });
+
+    return res.status(201).json({
+      ok: true,
+      data: {
+        id: String(doc._id),
+        status: doc.status,
+        createdAt: doc.createdAt
+      }
+    });
+  } catch (error) {
+    return next(error);
+  }
+});
+
+router.get("/manufacturer/product-applications", requireManufacturer, async (req, res, next) => {
+  try {
+    const sub = req.user && req.user.sub;
+    if (!sub || !mongoose.Types.ObjectId.isValid(sub)) {
+      return res.status(400).json({
+        ok: false,
+        error: "INVALID_SESSION",
+        message: "Invalid manufacturer session"
+      });
+    }
+
+    const rows = await ProductApplication.find({ manufacturerId: sub })
+      .sort({ createdAt: -1 })
+      .limit(100)
+      .select(
+        "productName category status nafdacNumber createdAt updatedAt thumbnailUrl productId registrationLabel"
+      )
+      .lean();
+
+    return res.json({
+      ok: true,
+      data: rows.map((r) => ({
+        id: String(r._id),
+        productName: r.productName,
+        category: r.category,
+        status: r.status,
+        nafdacNumber: r.nafdacNumber,
+        createdAt: r.createdAt,
+        updatedAt: r.updatedAt,
+        thumbnailUrl: r.thumbnailUrl,
+        productId: r.productId,
+        registrationLabel: r.registrationLabel
+      }))
+    });
+  } catch (error) {
+    return next(error);
+  }
 });
 
 module.exports = router;

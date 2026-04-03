@@ -9,16 +9,19 @@
     "start": "node src/server.js"
   },
   "dependencies": {
+    "axios": "^1.7.9",
     "bcryptjs": "*",
+    "cloudinary": "^2.5.1",
     "cors": "*",
     "dotenv": "*",
     "ethers": "*",
     "express": "*",
+    "form-data": "^4.0.1",
     "helmet": "*",
     "jsonwebtoken": "*",
     "mongoose": "*",
     "morgan": "*",
+    "multer": "^2.1.1",
     "qrcode": "*"
   }
 }
-
