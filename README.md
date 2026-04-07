@@ -6,7 +6,7 @@ This folder contains the **Node.js + Express.js API** for the Medichain MVP.
 
 It is designed around the requirements from the two source documents:
 
-- MVP flow from `PharmVerify_MVP_and_Testing_Guide.pdf`:
+- MVP flow :
   - `POST /register-drug`
   - `GET /verify-drug/:id`
   - `POST /recall-drug`
@@ -118,6 +118,15 @@ Copy `.env.example` to `.env` and fill values:
    - `npm run dev`
 4. Health check:
    - `GET /health`
+
+### API documentation (Swagger)
+
+- **Interactive UI:** `http://localhost:4000/api-docs` (or your `PORT`)
+- **Raw OpenAPI JSON:** `http://localhost:4000/openapi.json`
+
+The spec documents **all** routes: public verification, auth, manufacturer flows, uploads (IPFS / Cloudinary), blockchain writes, and admin dashboard endpoints. Use **Authorize** with a JWT from `POST /api/v1/auth/login` or `POST /api/v1/auth/manufacturer/login` to try protected routes.
+
+Spec source: `src/docs/openapi.js` (merges `openapi-core-paths.js` and `openapi-admin-paths.js`).
 
 ## Integration with smart-contracts folder
 
@@ -239,4 +248,3 @@ Deployment checklist:
 3. Verify route health publicly.
 4. Run smoke tests for register/verify/recall.
 5. Connect frontend base URL for QR links.
-

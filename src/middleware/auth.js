@@ -21,6 +21,13 @@ function requireAdmin(req, res, next) {
     }
 
     const payload = jwt.verify(token, secret);
+    if (payload && payload.type === "refresh") {
+      return res.status(401).json({
+        ok: false,
+        error: "INVALID_TOKEN",
+        message: "Use access token in Authorization header, not refresh token"
+      });
+    }
     if (!payload || payload.role !== "admin") {
       return res.status(403).json({
         ok: false,
@@ -61,6 +68,13 @@ function requireManufacturer(req, res, next) {
     }
 
     const payload = jwt.verify(token, secret);
+    if (payload && payload.type === "refresh") {
+      return res.status(401).json({
+        ok: false,
+        error: "INVALID_TOKEN",
+        message: "Use access token in Authorization header, not refresh token"
+      });
+    }
     if (!payload || payload.role !== "manufacturer") {
       return res.status(403).json({
         ok: false,
@@ -101,6 +115,13 @@ function requireManufacturerOrAdmin(req, res, next) {
     }
 
     const payload = jwt.verify(token, secret);
+    if (payload && payload.type === "refresh") {
+      return res.status(401).json({
+        ok: false,
+        error: "INVALID_TOKEN",
+        message: "Use access token in Authorization header, not refresh token"
+      });
+    }
     if (!payload || (payload.role !== "admin" && payload.role !== "manufacturer")) {
       return res.status(403).json({
         ok: false,

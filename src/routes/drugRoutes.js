@@ -14,6 +14,15 @@ const ProductApplication = require("../models/ProductApplication");
 
 const router = express.Router();
 
+function jwtAccessSecret() {
+  return process.env.JWT_SECRET || null;
+}
+
+/** Defaults to JWT_SECRET; set JWT_REFRESH_SECRET to sign refresh tokens with a separate key. */
+function jwtRefreshSecret() {
+  return process.env.JWT_REFRESH_SECRET || process.env.JWT_SECRET || null;
+}
+
 const WEEKDAY_LABELS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 
 function escapeRegex(s) {
@@ -491,8 +500,9 @@ router.post("/auth/login", async (req, res, next) => {
       });
     }
 
-    const secret = process.env.JWT_SECRET;
-    if (!secret) {
+    const accessSecret = jwtAccessSecret();
+    const refreshSec = jwtRefreshSecret();
+    if (!accessSecret || !refreshSec) {
       return res.status(500).json({
         ok: false,
         error: "CONFIG_ERROR",
@@ -500,16 +510,114 @@ router.post("/auth/login", async (req, res, next) => {
       });
     }
 
-    const token = jwt.sign(
-      { role: user.role, email: user.email, sub: String(user._id) },
-      secret,
-      { expiresIn: "12h" }
+    const rememberMe = Boolean(req.body?.rememberMe);
+    const refreshExpiresIn = rememberMe ? "30d" : "7d";
+
+    const accessToken = jwt.sign(
+      { type: "access", role: user.role, email: user.email, sub: String(user._id) },
+      accessSecret,
+      { expiresIn: "15m" }
+    );
+    const refreshToken = jwt.sign(
+      { type: "refresh", role: "admin", email: user.email, sub: String(user._id) },
+      refreshSec,
+      { expiresIn: refreshExpiresIn }
     );
 
     return res.json({
       ok: true,
       data: {
-        token
+        token: accessToken,
+        accessToken,
+        refreshToken,
+        email: user.email
+      }
+    });
+  } catch (error) {
+    return next(error);
+  }
+});
+
+router.post("/auth/refresh", async (req, res, next) => {
+  try {
+    const { refreshToken, rememberMe } = req.body || {};
+    if (!refreshToken || typeof refreshToken !== "string") {
+      return res.status(400).json({
+        ok: false,
+        error: "VALIDATION_ERROR",
+        message: "refreshToken is required"
+      });
+    }
+
+    const refreshSec = jwtRefreshSecret();
+    if (!refreshSec) {
+      return res.status(500).json({
+        ok: false,
+        error: "CONFIG_ERROR",
+        message: "JWT_SECRET is required"
+      });
+    }
+
+    let payload;
+    try {
+      payload = jwt.verify(refreshToken, refreshSec);
+    } catch (e) {
+      return res.status(401).json({
+        ok: false,
+        error: "INVALID_REFRESH",
+        message: "Invalid or expired refresh token"
+      });
+    }
+
+    if (!payload || payload.type !== "refresh" || payload.role !== "admin") {
+      return res.status(401).json({
+        ok: false,
+        error: "INVALID_REFRESH",
+        message: "Invalid refresh token"
+      });
+    }
+
+    const dbUser = await AdminUser.findOne({
+      _id: payload.sub,
+      isActive: true
+    });
+    if (!dbUser) {
+      return res.status(401).json({
+        ok: false,
+        error: "INVALID_REFRESH",
+        message: "User not found or inactive"
+      });
+    }
+
+    const accessSecret = jwtAccessSecret();
+    if (!accessSecret) {
+      return res.status(500).json({
+        ok: false,
+        error: "CONFIG_ERROR",
+        message: "JWT_SECRET is required"
+      });
+    }
+
+    const accessToken = jwt.sign(
+      { type: "access", role: dbUser.role, email: dbUser.email, sub: String(dbUser._id) },
+      accessSecret,
+      { expiresIn: "15m" }
+    );
+    const slidingRemember = Boolean(rememberMe);
+    const newRefreshExpires = slidingRemember ? "30d" : "7d";
+    const newRefreshToken = jwt.sign(
+      { type: "refresh", role: "admin", email: dbUser.email, sub: String(dbUser._id) },
+      refreshSec,
+      { expiresIn: newRefreshExpires }
+    );
+
+    return res.json({
+      ok: true,
+      data: {
+        token: accessToken,
+        accessToken,
+        refreshToken: newRefreshToken,
+        email: dbUser.email
       }
     });
   } catch (error) {
@@ -518,6 +626,9 @@ router.post("/auth/login", async (req, res, next) => {
 });
 
 router.post("/auth/mock-admin-token", (req, res) => {
+  if (process.env.ALLOW_MOCK_ADMIN_TOKEN !== "true") {
+    return res.status(404).json({ ok: false, error: "NOT_FOUND", message: "Not found" });
+  }
   const secret = process.env.JWT_SECRET;
   if (!secret) {
     return res.status(500).json({
@@ -527,16 +638,24 @@ router.post("/auth/mock-admin-token", (req, res) => {
     });
   }
 
-  const token = jwt.sign(
-    { role: "admin", email: "admin@medichain.ng" },
+  const accessToken = jwt.sign(
+    { type: "access", role: "admin", email: "admin@medichain.ng" },
     secret,
-    { expiresIn: "12h" }
+    { expiresIn: "15m" }
+  );
+  const refreshSec = jwtRefreshSecret() || secret;
+  const refreshToken = jwt.sign(
+    { type: "refresh", role: "admin", email: "admin@medichain.ng", sub: "mock" },
+    refreshSec,
+    { expiresIn: "7d" }
   );
 
   return res.json({
     ok: true,
     data: {
-      token
+      token: accessToken,
+      accessToken,
+      refreshToken
     }
   });
 });
@@ -633,6 +752,66 @@ router.get("/analytics/dashboard", async (req, res, next) => {
         verificationWeek,
         recentActivity
       }
+    });
+  } catch (error) {
+    return next(error);
+  }
+});
+
+/**
+ * Public product registry (Mongo mirror of on-chain products).
+ */
+router.get("/registry/products", async (req, res, next) => {
+  try {
+    const q = typeof req.query.q === "string" ? req.query.q.trim() : "";
+    const limit = Math.min(Math.max(Number(req.query.limit) || 80, 1), 200);
+    const filter = {};
+    if (q) {
+      filter.$or = [
+        { drugName: new RegExp(escapeRegex(q), "i") },
+        { manufacturer: new RegExp(escapeRegex(q), "i") },
+        { nafDacNumber: new RegExp(escapeRegex(q), "i") },
+        { batchNumber: new RegExp(escapeRegex(q), "i") }
+      ];
+    }
+    const rows = await ProductRecord.find(filter).sort({ updatedAt: -1 }).limit(limit).lean();
+    return res.json({
+      ok: true,
+      data: rows.map((r) => ({
+        productId: r.productId,
+        drugName: r.drugName,
+        manufacturer: r.manufacturer,
+        nafdacNumber: r.nafDacNumber,
+        batchNumber: r.batchNumber,
+        verificationResult: r.verificationResult,
+        ipfsCid: r.ipfsCid || ""
+      }))
+    });
+  } catch (error) {
+    return next(error);
+  }
+});
+
+router.get("/registry/manufacturers", async (req, res, next) => {
+  try {
+    const agg = await ProductRecord.aggregate([
+      { $match: { manufacturer: { $nin: [null, ""] } } },
+      { $group: { _id: "$manufacturer", count: { $sum: 1 } } },
+      { $sort: { count: -1 } },
+      { $limit: 100 }
+    ]);
+    const slugify = (name) =>
+      String(name || "")
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, "-")
+        .replace(/^-|-$/g, "") || "manufacturer";
+    return res.json({
+      ok: true,
+      data: agg.map((a) => ({
+        slug: slugify(a._id),
+        name: a._id,
+        productCount: a.count
+      }))
     });
   } catch (error) {
     return next(error);
@@ -873,6 +1052,42 @@ router.get("/manufacturer/product-applications", requireManufacturer, async (req
         productId: r.productId,
         registrationLabel: r.registrationLabel
       }))
+    });
+  } catch (error) {
+    return next(error);
+  }
+});
+
+router.get("/manufacturer/me/summary", requireManufacturer, async (req, res, next) => {
+  try {
+    const sub = req.user && req.user.sub;
+    if (!sub || !mongoose.Types.ObjectId.isValid(sub)) {
+      return res.status(400).json({
+        ok: false,
+        error: "INVALID_SESSION",
+        message: "Invalid manufacturer session"
+      });
+    }
+
+    const user = await ManufacturerUser.findById(sub).select("companyName").lean();
+    const companyName = user?.companyName || "";
+
+    const apps = await ProductApplication.find({ manufacturerId: sub }).lean();
+    const pending = apps.filter((a) => a.status === "pending").length;
+    const approved = apps.filter((a) => a.status === "approved").length;
+    const rejected = apps.filter((a) => a.status === "rejected").length;
+    const changesRequested = apps.filter((a) => a.status === "changes_requested").length;
+
+    return res.json({
+      ok: true,
+      data: {
+        companyName,
+        totalApplications: apps.length,
+        pending,
+        approved,
+        rejected,
+        changesRequested
+      }
     });
   } catch (error) {
     return next(error);

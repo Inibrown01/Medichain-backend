@@ -253,74 +253,19 @@ router.get("/overview", async (req, res, next) => {
     ]);
 
     const categoryMap = {
-      GENUINE: { name: "Antibiotics", color: "#2563eb" },
-      FLAGGED: { name: "Analgesics", color: "#f59e0b" },
-      NOT_REGISTERED: { name: "Supplements", color: "#ef4444" }
+      GENUINE: { name: "Genuine (verified)", color: "#10b981" },
+      FLAGGED: { name: "Flagged", color: "#f59e0b" },
+      NOT_REGISTERED: { name: "Not registered / rejected", color: "#ef4444" }
     };
 
     const categoryBreakdown = categoryAgg.map((c) => {
-      const meta = categoryMap[c._id] || { name: "Others", color: "#94a3b8" };
+      const meta = categoryMap[c._id] || { name: String(c._id || "Unknown"), color: "#94a3b8" };
       return { name: meta.name, value: c.count, color: meta.color };
     });
 
-    const alerts = [
-      {
-        id: "1",
-        kind: "danger",
-        title: "Suspicious Activity Cluster",
-        meta: "High volume of fake detections in Kano region.",
-        timeLabel: "12 MINS AGO"
-      },
-      {
-        id: "2",
-        kind: "warning",
-        title: "New Product Submission",
-        meta: 'Emzor Pharma submitted "Vitamix-D" for review.',
-        timeLabel: "45 MINS AGO"
-      },
-      {
-        id: "3",
-        kind: "danger",
-        title: "Recall Request",
-        meta: "Batch #EMZ-992 requires immediate recall approval.",
-        timeLabel: "1 HOUR AGO"
-      }
-    ];
-
-    const auditLog = [
-      {
-        id: "a1",
-        admin: "Madeleine Nkiru",
-        action: "Approved Product",
-        target: "Amoxicillin 500mg",
-        timeLabel: "10 mins ago",
-        status: "completed"
-      },
-      {
-        id: "a2",
-        admin: "S. Adamu",
-        action: "Flagged Batch",
-        target: "Batch #BT-221",
-        timeLabel: "25 mins ago",
-        status: "pending"
-      },
-      {
-        id: "a3",
-        admin: "System",
-        action: "Auto-Recall Issued",
-        target: "Paracetamol B-99",
-        timeLabel: "25 mins ago",
-        status: "failed"
-      },
-      {
-        id: "a4",
-        admin: "Madeleine Nkiru",
-        action: "Rejected Submission",
-        target: "Herbal-X",
-        timeLabel: "10 mins ago",
-        status: "failed"
-      }
-    ];
+    /** Populated from real audit store when available; empty in MVP. */
+    const alerts = [];
+    const auditLog = [];
 
     return res.json({
       ok: true,
@@ -336,28 +281,28 @@ router.get("/overview", async (req, res, next) => {
             key: "products",
             label: "Total Products",
             value: formatStatNumber(totalProducts),
-            delta: "+8.2%",
+            delta: "—",
             deltaPositive: true
           },
           {
             key: "verifications",
             label: "Verifications",
             value: formatStatNumber(totalLogs),
-            delta: "+12.5%",
+            delta: "—",
             deltaPositive: true
           },
           {
             key: "fake",
-            label: "Fake Detected",
+            label: "Unregistered Lookups",
             value: formatStatNumber(fakeLogs),
-            delta: "+4.1%",
+            delta: "—",
             deltaPositive: true
           },
           {
             key: "flags",
-            label: "Active Flags",
+            label: "Flagged Verifications",
             value: formatStatNumber(flaggedLogs),
-            delta: "-2.1%",
+            delta: "—",
             deltaPositive: false
           }
         ],
@@ -365,16 +310,7 @@ router.get("/overview", async (req, res, next) => {
         chartMonthly,
         alerts,
         auditLog,
-        categoryBreakdown:
-          categoryBreakdown.length > 0
-            ? categoryBreakdown
-            : [
-                { name: "Antibiotics", value: 40, color: "#2563eb" },
-                { name: "Antimalarials", value: 25, color: "#10b981" },
-                { name: "Analgesics", value: 20, color: "#f59e0b" },
-                { name: "Supplements", value: 10, color: "#ef4444" },
-                { name: "Others", value: 5, color: "#94a3b8" }
-              ]
+        categoryBreakdown
       }
     });
   } catch (e) {
@@ -902,34 +838,23 @@ router.get("/batches/:batchKey/detail", async (req, res, next) => {
     });
     const recentLogs = await VerificationLog.find(logFilter).sort({ createdAt: -1 }).limit(12).lean();
 
-    const cities = [
-      { city: "Lagos", ratio: 0.42 },
-      { city: "Kano", ratio: 0.18 },
-      { city: "Abuja", ratio: 0.14 },
-      { city: "Rivers", ratio: 0.12 },
-      { city: "Enugu", ratio: 0.08 }
-    ];
-    const base = Math.max(totalScans, batch.verificationCount || 1000);
-    const geoDistribution = cities.map((c) => ({
-      city: c.city,
-      count: Math.round(base * c.ratio)
-    }));
+    const geoDistribution =
+      totalScans > 0 ?
+        [
+          {
+            city: "All recorded scans",
+            count: totalScans
+          }
+        ]
+      : [];
 
     let recentScans = recentLogs.map((log) => ({
       id: String(log._id),
-      location: log.clientIp ? `${log.clientIp.slice(0, 8)}…` : "Lagos, NG",
+      location: log.clientIp ? `${log.clientIp.slice(0, 8)}…` : "—",
       device: (log.userAgent || "Mobile").slice(0, 32),
       timeLabel: relMinutesAgo(log.createdAt),
       genuine: log.verificationResult === "GENUINE"
     }));
-
-    if (recentScans.length === 0) {
-      recentScans = [
-        { id: "1", location: "Lagos, NG", device: "IPHONE 13", timeLabel: "2 MINS AGO", genuine: true },
-        { id: "2", location: "Kano, NG", device: "SAMSUNG A52", timeLabel: "8 MINS AGO", genuine: false },
-        { id: "3", location: "Abuja, NG", device: "PIXEL 7", timeLabel: "15 MINS AGO", genuine: true }
-      ];
-    }
 
     const manuf = batch.manufacturingDate ? new Date(batch.manufacturingDate) : new Date();
     const exp = batch.expiryDate ? new Date(batch.expiryDate) : new Date();
@@ -946,12 +871,12 @@ router.get("/batches/:batchKey/detail", async (req, res, next) => {
         suspended: batch.suspended,
         expiryDate: exp.toISOString().slice(0, 10),
         manufacturedAt: manuf.toISOString(),
-        qrHash: batch.qrHash || "8f2d…4a1c",
+        qrHash: batch.qrHash || "—",
         stats: {
-          totalQuantity: batch.quantity || 50000,
-          verifiedScans: totalScans || batch.verificationCount || 1245,
-          marketReachStates: 12,
-          flaggedUnits: fake || 42
+          totalQuantity: batch.quantity || 0,
+          verifiedScans: totalScans || batch.verificationCount || 0,
+          marketReachStates: totalScans > 0 ? 1 : 0,
+          flaggedUnits: fake || 0
         },
         geoDistribution,
         recentScans,
@@ -1912,8 +1837,9 @@ router.get("/analytics/regulatory", async (req, res, next) => {
       createdAt: { $gte: start, $lte: end },
       verificationResult: { $in: ["NOT_REGISTERED", "FLAGGED"] }
     });
-    const fakeRate = totalLogs > 0 ? ((fakes / totalLogs) * 100).toFixed(1) : "2.8";
-    const trust = Math.max(88, Math.min(99, 100 - Number(fakeRate))).toFixed(1);
+    const fakeRate = totalLogs > 0 ? ((fakes / totalLogs) * 100).toFixed(1) : "0";
+    const trust =
+      totalLogs > 0 ? Math.max(0, Math.min(100, 100 - Number(fakeRate))).toFixed(1) : null;
 
     const agg = await VerificationLog.aggregate([
       { $match: { createdAt: { $gte: start, $lte: end } } },
@@ -1954,12 +1880,25 @@ router.get("/analytics/regulatory", async (req, res, next) => {
           : `${MONTH_LABELS[d.getUTCMonth()]} ${d.getUTCDate()}`;
       trend.push({
         label,
-        verifications: v.total > 0 ? v.total : 20000 + i * 1200 + (i % 4) * 700,
-        fakes: v.fakes > 0 ? v.fakes : 400 + i * 35
+        verifications: v.total,
+        fakes: v.fakes
       });
     }
 
     const recallsOpen = await RecallRequest.countDocuments({ status: { $in: ["pending", "approved"] } });
+
+    const productStatusAgg = await ProductRecord.aggregate([
+      { $group: { _id: { $ifNull: ["$verificationResult", "UNKNOWN"] }, count: { $sum: 1 } } }
+    ]);
+    const statusMeta = {
+      GENUINE: { name: "Genuine", color: "#10b981" },
+      FLAGGED: { name: "Flagged", color: "#f59e0b" },
+      NOT_REGISTERED: { name: "Not registered", color: "#ef4444" }
+    };
+    const categories = productStatusAgg.map((c) => {
+      const meta = statusMeta[c._id] || { name: String(c._id), color: "#94a3b8" };
+      return { name: meta.name, value: c.count, color: meta.color };
+    });
 
     return res.json({
       ok: true,
@@ -1967,58 +1906,41 @@ router.get("/analytics/regulatory", async (req, res, next) => {
         kpis: [
           {
             key: "trust",
-            label: "Market Trust Index",
-            value: `${trust}%`,
-            delta: "+2.4%",
+            label: "Trust index (approx.)",
+            value: trust != null ? `${trust}%` : "—",
+            delta: "—",
             deltaUp: true,
             good: true
           },
           {
             key: "speed",
-            label: "Avg. Verification Time",
-            value: "1.2s",
-            delta: "-0.3s",
-            deltaUp: false,
+            label: "Avg. verification time",
+            value: "—",
+            delta: "—",
+            deltaUp: true,
             good: true
           },
           {
             key: "fake",
-            label: "Fake Detection Rate",
-            value: `${fakeRate}%`,
-            delta: "+0.5%",
-            deltaUp: true,
+            label: "Suspicious / unregistered rate",
+            value: totalLogs > 0 ? `${fakeRate}%` : "—",
+            delta: "—",
+            deltaUp: false,
             good: false
           },
           {
             key: "recall",
-            label: "Active Recalls",
-            value: String(recallsOpen || 12),
-            delta: "-2",
+            label: "Open recall requests",
+            value: String(recallsOpen),
+            delta: "—",
             deltaUp: false,
             good: true
           }
         ],
         trend,
-        categories: [
-          { name: "Antibiotics", value: 35, color: "#2563eb" },
-          { name: "Analgesics", value: 25, color: "#10b981" },
-          { name: "Antimalarials", value: 20, color: "#eab308" },
-          { name: "Respiratory", value: 10, color: "#ef4444" },
-          { name: "Others", value: 10, color: "#94a3b8" }
-        ],
-        regionalRisk: [
-          { city: "Lagos", risk: 42 },
-          { city: "Kano", risk: 38 },
-          { city: "Abuja", risk: 28 },
-          { city: "Ibadan", risk: 22 },
-          { city: "Enugu", risk: 18 },
-          { city: "Port Harcourt", risk: 31 }
-        ],
-        devices: [
-          { name: "Android", value: 72, color: "#2563eb" },
-          { name: "iOS", value: 25, color: "#ef4444" },
-          { name: "Web/Other", value: 3, color: "#eab308" }
-        ]
+        categories,
+        regionalRisk: [],
+        devices: []
       }
     });
   } catch (e) {
@@ -2067,45 +1989,43 @@ router.patch("/settings", async (req, res, next) => {
 
 router.get("/compliance/overview", async (req, res, next) => {
   try {
+    const pendingApps = await ProductApplication.countDocuments({ status: "pending" });
+    const pendingRecalls = await RecallRequest.countDocuments({ status: "pending" });
+    const totalProducts = await ProductRecord.countDocuments();
+    const suspiciousOpen = await SuspiciousReport.countDocuments({
+      status: { $in: ["pending", "flagged", "escalated"] }
+    });
+
     return res.json({
       ok: true,
       data: {
         kpis: [
-          { key: "audits", label: "Regulatory Audits", value: "12", hint: "Pending internal audits for Q1 2026." },
-          { key: "legal", label: "Legal Disputes", value: "3", hint: "Active legal cases regarding counterfeit batches." },
-          { key: "index", label: "Compliance Index", value: "98.5%", hint: "Overall system compliance with NAFDAC standards." },
-          { key: "inq", label: "Open Inquiries", value: "45", hint: "Manufacturer inquiries regarding new regulations." }
-        ],
-        timeline: [
           {
-            id: "1",
-            title: "New Serialization Standard",
-            body: "Mandatory 2D data matrix for all antimalarials.",
-            date: "APRIL 15, 2026",
-            tone: "blue"
+            key: "apps",
+            label: "Pending product applications",
+            value: String(pendingApps),
+            hint: "Manufacturer submissions awaiting review."
           },
           {
-            id: "2",
-            title: "Manufacturer Audit: Swiss Pharma",
-            body: "Annual facility inspection and license renewal.",
-            date: "APRIL 15, 2026",
-            tone: "green"
+            key: "recalls",
+            label: "Pending recall requests",
+            value: String(pendingRecalls),
+            hint: "Awaiting regulatory decision."
           },
           {
-            id: "3",
-            title: "Recall Directive: Batch EMZ-001",
-            body: "Nationwide recall issued due to counterfeit detection.",
-            date: "APRIL 15, 2026",
-            tone: "green"
+            key: "registry",
+            label: "Registered products (mirror)",
+            value: String(totalProducts),
+            hint: "Rows in ProductRecord."
           },
           {
-            id: "4",
-            title: "Compliance Workshop",
-            body: "Training for pharmaceutical distributors in Lagos.",
-            date: "APRIL 15, 2026",
-            tone: "green"
+            key: "reports",
+            label: "Open suspicious reports",
+            value: String(suspiciousOpen),
+            hint: "Reports not yet dismissed."
           }
-        ]
+        ],
+        timeline: []
       }
     });
   } catch (e) {
