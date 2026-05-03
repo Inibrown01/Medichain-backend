@@ -16,6 +16,11 @@ const openApiDocument = require("./docs/openapi");
 const app = express();
 const port = Number(process.env.PORT || 4000);
 
+// Behind cPanel / nginx / Passenger on shared hosting, trust first proxy for correct client IP and HTTPS.
+if (process.env.TRUST_PROXY !== "0") {
+  app.set("trust proxy", Number(process.env.TRUST_PROXY_HOPS || 1));
+}
+
 app.use(cors());
 
 app.get("/openapi.json", (_req, res) => {

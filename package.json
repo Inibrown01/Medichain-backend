@@ -4,6 +4,9 @@
   "private": true,
   "description": "Express API for Medichain smart contract integration",
   "main": "src/server.js",
+  "engines": {
+    "node": ">=18 <=22"
+  },
   "scripts": {
     "dev": "node src/server.js",
     "start": "node src/server.js"
