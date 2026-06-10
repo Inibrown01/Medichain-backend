@@ -1,12 +1,10 @@
 # Medichain Express Backend
 
-> **Full local setup, env tables, E2E curl flows, and deployment order:** see the repository **[`README.md`](../README.md)** at the repo root. This file focuses on API behavior and integration notes.
-
 This folder contains the **Node.js + Express.js API** for the Medichain MVP.
 
 It is designed around the requirements from the two source documents:
 
-- MVP flow :
+- MVP flow from `PharmVerify_MVP_and_Testing_Guide.pdf`:
   - `POST /register-drug`
   - `GET /verify-drug/:id`
   - `POST /recall-drug`
@@ -104,10 +102,10 @@ Copy `.env.example` to `.env` and fill values:
 - `PORT`: API server port (default `4000`)
 - `JWT_SECRET`: token secret for admin auth
 - `MONGODB_URI`: Mongo connection string
-- `RPC_URL`: HTTPS RPC for the **same chain** as your deployment (e.g. Base Sepolia, Polygon Amoy — see root `README.md`)
+- `RPC_URL`: Polygon Mumbai (or chosen EVM chain) RPC endpoint
 - `CONTRACT_ADDRESS`: deployed `PharmVerifyRegistry` contract address
 - `OWNER_PRIVATE_KEY`: wallet private key with admin/owner rights on contract
-- Pinata / Cloudinary variables: see root `README.md` and `.env.example` (IPFS for sensitive files, Cloudinary for public images)
+- `FRONTEND_BASE_URL`: base URL your frontend will use for verification pages
 
 ## Install and run locally
 
@@ -118,15 +116,6 @@ Copy `.env.example` to `.env` and fill values:
    - `npm run dev`
 4. Health check:
    - `GET /health`
-
-### API documentation (Swagger)
-
-- **Interactive UI:** `http://localhost:4000/api-docs` (or your `PORT`)
-- **Raw OpenAPI JSON:** `http://localhost:4000/openapi.json`
-
-The spec documents **all** routes: public verification, auth, manufacturer flows, uploads (IPFS / Cloudinary), blockchain writes, and admin dashboard endpoints. Use **Authorize** with a JWT from `POST /api/v1/auth/login` or `POST /api/v1/auth/manufacturer/login` to try protected routes.
-
-Spec source: `src/docs/openapi.js` (merges `openapi-core-paths.js` and `openapi-admin-paths.js`).
 
 ## Integration with smart-contracts folder
 
@@ -239,7 +228,7 @@ To match the guide’s testing scenarios:
 Recommended MVP deployment stack from proposal:
 
 - Backend hosting: Railway / Render
-- Chain: Polygon Amoy or Base Sepolia testnet first (see `smart-contracts` README)
+- Chain: Polygon Mumbai testnet first
 
 Deployment checklist:
 
@@ -248,3 +237,4 @@ Deployment checklist:
 3. Verify route health publicly.
 4. Run smoke tests for register/verify/recall.
 5. Connect frontend base URL for QR links.
+

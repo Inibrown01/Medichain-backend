@@ -17,9 +17,7 @@ const ProductRecordSchema = new mongoose.Schema(
     },
     duplicateCount: { type: Number, default: 0 },
     chainCreatedAt: { type: Number, default: 0 },
-    lastTransactionHash: { type: String, default: "" },
-    /** On-chain manufacturer wallet (0x...) when provided at registration */
-    manufacturerWallet: { type: String, default: "" }
+    lastTransactionHash: { type: String, default: "" }
   },
   {
     timestamps: true
